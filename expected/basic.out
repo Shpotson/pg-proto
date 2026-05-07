@@ -1,0 +1,8 @@
+CREATE EXTENSION IF NOT EXISTS pg_proto;
+
+SELECT pg_proto_version();
+ pg_proto_version 
+------------------
+ pg_proto 0.1
+(1 row)
+
