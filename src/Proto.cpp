@@ -182,4 +182,86 @@ namespace proto
         return result;
     }
 
+    ProtoField Proto::resolve_field_by_path(const FlatProtoPath& path)
+    {
+        if (path.empty())
+            throw std::runtime_error("Empty path");
+
+        const std::byte* cur_data = proto_data.data();
+        size_t           cur_size = proto_data.size();
+
+        const std::size_t n = path.size();
+        for (std::size_t i = 0; i + 1 < n; ++i)
+        {
+            const FlatPathStep step = path[i];
+            if (step.kind != FieldKind::Message)
+                throw std::runtime_error(
+                        "Intermediate path step '" + std::string(path.name_of(i)) +
+                        "' is not a Message");
+
+            RawField rf = find_field(cur_data, cur_size, step.field_number);
+            if (!rf.found)
+                throw std::runtime_error(
+                        "Field '" + std::string(path.name_of(i)) + "' not found in buffer");
+            if (rf.wire_type != WIRE_LEN)
+                throw std::runtime_error(
+                        "Expected LEN wire type for message field '" +
+                        std::string(path.name_of(i)) + "'");
+
+            nested_buffers.push_back(std::move(rf.len_val));
+            cur_data = nested_buffers.back().data();
+            cur_size = nested_buffers.back().size();
+        }
+
+        const FlatPathStep last = path[n - 1];
+        RawField rf = find_field(cur_data, cur_size, last.field_number);
+        if (!rf.found)
+            throw std::runtime_error(
+                    "Field '" + std::string(path.name_of(n - 1)) + "' not found in buffer");
+
+        ProtoField result;
+        result.field_number = last.field_number;
+        result.kind         = last.kind;
+
+        switch (last.kind)
+        {
+            case FieldKind::Int32:
+                result.value = static_cast<int32_t>(rf.varint_val); break;
+            case FieldKind::Int64:
+                result.value = static_cast<int64_t>(rf.varint_val); break;
+            case FieldKind::UInt32:
+                result.value = static_cast<uint32_t>(rf.varint_val); break;
+            case FieldKind::UInt64:
+                result.value = rf.varint_val; break;
+            case FieldKind::SInt32:
+                result.value = zagzag32(static_cast<uint32_t>(rf.varint_val)); break;
+            case FieldKind::SInt64:
+                result.value = zagzag64(rf.varint_val); break;
+            case FieldKind::Bool:
+                result.value = static_cast<bool>(rf.varint_val); break;
+            case FieldKind::Float: {
+                float f; std::memcpy(&f, &rf.varint_val, 4);
+                result.value = f; break;
+            }
+            case FieldKind::Double: {
+                double d; std::memcpy(&d, &rf.varint_val, 8);
+                result.value = d; break;
+            }
+            case FieldKind::Fixed32:
+                result.value = static_cast<uint32_t>(rf.varint_val); break;
+            case FieldKind::Fixed64:
+                result.value = rf.varint_val; break;
+            case FieldKind::String: {
+                std::string s(reinterpret_cast<const char*>(rf.len_val.data()),
+                              rf.len_val.size());
+                result.value = std::move(s); break;
+            }
+            case FieldKind::Bytes:
+            case FieldKind::Message:
+                result.value = std::move(rf.len_val); break;
+        }
+
+        nested_buffers.clear();
+        return result;
+    }
 } // namespace proto

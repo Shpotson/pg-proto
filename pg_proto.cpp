@@ -2,17 +2,26 @@ extern "C" {
 #include "postgres.h"
 #include "fmgr.h"
 #include "utils/builtins.h"
+#include "utils/memutils.h"
 #include <varatt.h>
 
 PG_MODULE_MAGIC;
 
 PG_FUNCTION_INFO_V1(pg_proto_version);
 
+PG_FUNCTION_INFO_V1(resolve_path);
+
 PG_FUNCTION_INFO_V1(get_text_by_scheme);
 PG_FUNCTION_INFO_V1(get_int32_by_scheme);
 PG_FUNCTION_INFO_V1(get_int64_by_scheme);
 PG_FUNCTION_INFO_V1(get_double_by_scheme);
 PG_FUNCTION_INFO_V1(get_float_by_scheme);
+
+PG_FUNCTION_INFO_V1(get_text_by_path);
+PG_FUNCTION_INFO_V1(get_int32_by_path);
+PG_FUNCTION_INFO_V1(get_int64_by_path);
+PG_FUNCTION_INFO_V1(get_double_by_path);
+PG_FUNCTION_INFO_V1(get_float_by_path);
 }
 
 #include "pg_proto.h"
@@ -38,6 +47,44 @@ std::string convertStringFromDto(const text* textDto){
     pfree(cstr);
 
     return result;
+}
+
+Datum resolve_path(PG_FUNCTION_ARGS)
+{
+    text* proto_schema_dto  = PG_GETARG_TEXT_PP(0);
+    text* root_message_dto  = PG_GETARG_TEXT_PP(1);
+    text* proto_command_dto = PG_GETARG_TEXT_PP(2);
+
+    std::string proto_schema_raw = convertStringFromDto(proto_schema_dto);
+    std::string root_message     = convertStringFromDto(root_message_dto);
+    std::string proto_command    = convertStringFromDto(proto_command_dto);
+
+    ProtoSchemaMap proto_schema_map(proto_schema_raw);
+    std::vector<PathStep> path =
+            proto_schema_map.resolve_path(root_message, proto_command);
+
+    const std::size_t payload_size = FlatProtoPath::compute_size(path);
+
+    if (payload_size > static_cast<std::size_t>(MaxAllocSize) - VARHDRSZ)
+        ereport(ERROR,
+                (errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+                        errmsg("ProtoPath payload too large")));
+
+    bytea* result = (bytea*) palloc(VARHDRSZ + payload_size);
+    SET_VARSIZE(result, VARHDRSZ + payload_size);
+
+    try {
+        FlatProtoPath::encode_into(
+                path,
+                reinterpret_cast<std::byte*>(VARDATA(result)),
+                payload_size);
+    } catch (const std::exception& e) {
+        ereport(ERROR,
+                (errcode(ERRCODE_DATA_EXCEPTION),
+                        errmsg("resolve_path failed: %s", e.what())));
+    }
+
+    PG_RETURN_BYTEA_P(result);
 }
 
 Datum pg_proto_version(PG_FUNCTION_ARGS)
@@ -207,4 +254,171 @@ Datum get_float_by_scheme(PG_FUNCTION_ARGS)
     float result = std::get<float>(field.value);
 
     PG_RETURN_FLOAT4(result);
+}
+
+Datum get_text_by_path(PG_FUNCTION_ARGS)
+{
+    bytea* path_dto       = PG_GETARG_BYTEA_PP(0);
+    bytea* proto_data_dto = PG_GETARG_BYTEA_PP(1);
+
+    std::span<const std::byte> proto_data_raw = convertBytesSpanFromDto(proto_data_dto);
+    std::span<const std::byte> path_raw       = convertBytesSpanFromDto(path_dto);
+
+    Proto proto_data(proto_data_raw);
+    FlatProtoPath path(path_raw);
+
+    ProtoField field;
+    try {
+        field = proto_data.resolve_field_by_path(path);
+    } catch (const std::exception& e) {
+        ereport(ERROR,
+                (errcode(ERRCODE_DATA_EXCEPTION),
+                        errmsg("get_text_by_path failed: %s", e.what())));
+    }
+
+    if (field.kind != FieldKind::String) {
+        std::string message = "Invalid Field type: " + to_string(field.kind);
+        ereport(ERROR,
+                (errcode(ERRCODE_PROTOCOL_VIOLATION),
+                        errmsg("%s", message.c_str())));
+    }
+
+    std::string result = std::get<std::string>(field.value);
+    PG_RETURN_TEXT_P(cstring_to_text_with_len(result.c_str(), result.size()));
+}
+
+Datum get_int32_by_path(PG_FUNCTION_ARGS)
+{
+    bytea* path_dto       = PG_GETARG_BYTEA_PP(0);
+    bytea* proto_data_dto = PG_GETARG_BYTEA_PP(1);
+
+    std::span<const std::byte> proto_data_raw = convertBytesSpanFromDto(proto_data_dto);
+    std::span<const std::byte> path_raw       = convertBytesSpanFromDto(path_dto);
+
+    Proto proto_data(proto_data_raw);
+    FlatProtoPath path(path_raw);
+
+    ProtoField field;
+    try {
+        field = proto_data.resolve_field_by_path(path);
+    } catch (const std::exception& e) {
+        ereport(ERROR,
+                (errcode(ERRCODE_DATA_EXCEPTION),
+                        errmsg("get_text_by_path failed: %s", e.what())));
+    }
+
+    if(field.kind != FieldKind::Int32 & field.kind != FieldKind::SInt32 & field.kind != FieldKind::UInt32){
+        std::string message = "Invalid Field type: " + to_string(field.kind);
+
+        ereport(ERROR, (errcode(ERRCODE_PROTOCOL_VIOLATION), errmsg("%s",message.c_str())));
+    }
+
+    if (field.kind == FieldKind::UInt32){
+        uint32_t result_u = std::get<uint32_t>(field.value);
+
+        PG_RETURN_INT32(result_u);
+    }
+
+    int32_t result = std::get<int32_t>(field.value);
+
+    PG_RETURN_INT32(result);
+}
+
+Datum get_int64_by_path(PG_FUNCTION_ARGS)
+{
+    bytea* path_dto       = PG_GETARG_BYTEA_PP(0);
+    bytea* proto_data_dto = PG_GETARG_BYTEA_PP(1);
+
+    std::span<const std::byte> proto_data_raw = convertBytesSpanFromDto(proto_data_dto);
+    std::span<const std::byte> path_raw       = convertBytesSpanFromDto(path_dto);
+
+    Proto proto_data(proto_data_raw);
+    FlatProtoPath path(path_raw);
+
+    ProtoField field;
+    try {
+        field = proto_data.resolve_field_by_path(path);
+    } catch (const std::exception& e) {
+        ereport(ERROR,
+                (errcode(ERRCODE_DATA_EXCEPTION),
+                        errmsg("get_text_by_path failed: %s", e.what())));
+    }
+
+    if(field.kind != FieldKind::Int64 & field.kind != FieldKind::SInt64 & field.kind != FieldKind::UInt64){
+        std::string message = "Invalid Field type: " + to_string(field.kind);
+
+        ereport(ERROR, (errcode(ERRCODE_PROTOCOL_VIOLATION), errmsg("%s",message.c_str())));
+    }
+
+    if (field.kind == FieldKind::UInt64){
+        uint64_t result_u = std::get<uint64_t>(field.value);
+
+        PG_RETURN_INT64(result_u);
+    }
+
+    int64_t result = std::get<int64_t>(field.value);
+
+    PG_RETURN_INT64(result);
+}
+
+Datum get_float_by_path(PG_FUNCTION_ARGS)
+{
+    bytea* path_dto       = PG_GETARG_BYTEA_PP(0);
+    bytea* proto_data_dto = PG_GETARG_BYTEA_PP(1);
+
+    std::span<const std::byte> proto_data_raw = convertBytesSpanFromDto(proto_data_dto);
+    std::span<const std::byte> path_raw       = convertBytesSpanFromDto(path_dto);
+
+    Proto proto_data(proto_data_raw);
+    FlatProtoPath path(path_raw);
+
+    ProtoField field;
+    try {
+        field = proto_data.resolve_field_by_path(path);
+    } catch (const std::exception& e) {
+        ereport(ERROR,
+                (errcode(ERRCODE_DATA_EXCEPTION),
+                        errmsg("get_text_by_path failed: %s", e.what())));
+    }
+
+    if(field.kind != FieldKind::Float){
+        std::string message = "Invalid Field type: " + to_string(field.kind);
+
+        ereport(ERROR, (errcode(ERRCODE_PROTOCOL_VIOLATION), errmsg("%s",message.c_str())));
+    }
+
+    float result = std::get<float>(field.value);
+
+    PG_RETURN_FLOAT4(result);
+}
+
+Datum get_double_by_path(PG_FUNCTION_ARGS)
+{
+    bytea* path_dto       = PG_GETARG_BYTEA_PP(0);
+    bytea* proto_data_dto = PG_GETARG_BYTEA_PP(1);
+
+    std::span<const std::byte> proto_data_raw = convertBytesSpanFromDto(proto_data_dto);
+    std::span<const std::byte> path_raw       = convertBytesSpanFromDto(path_dto);
+
+    Proto proto_data(proto_data_raw);
+    FlatProtoPath path(path_raw);
+
+    ProtoField field;
+    try {
+        field = proto_data.resolve_field_by_path(path);
+    } catch (const std::exception& e) {
+        ereport(ERROR,
+                (errcode(ERRCODE_DATA_EXCEPTION),
+                        errmsg("get_text_by_path failed: %s", e.what())));
+    }
+
+    if(field.kind != FieldKind::Double){
+        std::string message = "Invalid Field type: " + to_string(field.kind);
+
+        ereport(ERROR, (errcode(ERRCODE_PROTOCOL_VIOLATION), errmsg("%s",message.c_str())));
+    }
+
+    double result = std::get<double>(field.value);
+
+    PG_RETURN_FLOAT8(result);
 }

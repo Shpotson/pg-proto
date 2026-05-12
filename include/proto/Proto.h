@@ -4,6 +4,7 @@
 #include <vector>
 #include <span>
 #include "ProtoUtils.h"
+#include "FlatProtoPath.h"
 
 namespace proto
 {
@@ -13,6 +14,7 @@ namespace proto
         explicit Proto(std::span<const std::byte> proto_data);
 
         ProtoField resolve_field_by_path(std::vector<PathStep> path);
+        ProtoField resolve_field_by_path(const FlatProtoPath& path);
 
     private:
         std::span<const std::byte>         proto_data;
