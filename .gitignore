@@ -24,3 +24,4 @@ CMakeUserPresets.json
 bench_results.txt
 
 .venv*
+.idea
