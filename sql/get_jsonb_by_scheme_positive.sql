@@ -1,0 +1,33 @@
+--   name   = "alice"
+--   scores = [10, 20, 30]               (repeated int32, packed)
+--   ids    = [100, 200, 9999999999]     (repeated int64, packed)
+
+-- 1) plain object: repeated int32 (number) + repeated int64 (string)
+SELECT get_jsonb_by_scheme(
+               $$
+                   package tutorial;
+
+message Stats {
+    string name = 1;
+    repeated int32 scores = 2;
+    repeated int64 ids = 3;
+}
+$$,
+    'Stats',
+    '\x0a05616c69636512030a141e1a0864c801ffc7afa025'::bytea
+);
+
+-- 2) empty proto -> empty object
+SELECT get_jsonb_by_scheme(
+               $$
+                   package tutorial;
+
+message Stats {
+    string name = 1;
+    repeated int32 scores = 2;
+    repeated int64 ids = 3;
+}
+$$,
+    'Stats',
+    '\x'::bytea
+);

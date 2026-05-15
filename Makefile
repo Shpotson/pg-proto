@@ -5,8 +5,9 @@ OBJS = \
 	pg_proto.o \
 	src/Proto.o \
 	src/FlatProtoPath.o \
-	src/ProtoSchemaMap.o \
-	src/ProtoSchemaFlatMap.o \
+	src/ProtoSchemeMap.o \
+	src/ProtoSchemeFlatMap.o \
+	src/ProtoToJsonConverter.o \
 	src/ProtoUtils.o
 
 DATA = pg_proto--0.1.sql
@@ -21,7 +22,9 @@ REGRESS = basic \
           get_int64_by_path_positive \
           get_text_by_path_positive \
           get_float_by_path_positive \
-          get_double_by_path_positive
+          get_double_by_path_positive \
+          get_jsonb_by_scheme_positive \
+          get_jsonb_by_scheme_map_positive
 
 REGRESS_OPTS = --inputdir=.
 
@@ -43,8 +46,8 @@ UNIT_TEST_BIN = $(UNIT_TEST_DIR)/unit_tests
 UNIT_TEST_SRCS = \
 	$(UNIT_TEST_DIR)/proto_tests.cpp \
 	src/Proto.cpp \
-	src/ProtoSchemaMap.cpp \
-	src/ProtoSchemaFlatMap.cpp \
+	src/ProtoSchemeMap.cpp \
+	src/ProtoSchemeFlatMap.cpp \
 	src/FlatProtoPath.cpp \
 	src/ProtoUtils.cpp
 

@@ -17,4 +17,8 @@ PGDLLEXPORT Datum get_int64_by_path(PG_FUNCTION_ARGS);
 PGDLLEXPORT Datum get_float_by_path(PG_FUNCTION_ARGS);
 PGDLLEXPORT Datum get_double_by_path(PG_FUNCTION_ARGS);
 
+PGDLLEXPORT Datum resolve_scheme_map(PG_FUNCTION_ARGS);
+PGDLLEXPORT Datum get_jsonb_by_scheme(PG_FUNCTION_ARGS);
+PGDLLEXPORT Datum get_jsonb_by_scheme_map(PG_FUNCTION_ARGS);
+
 #endif

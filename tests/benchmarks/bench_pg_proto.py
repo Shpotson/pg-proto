@@ -19,9 +19,9 @@ REPORT_PATH = "bench_results.txt"
 CONN_KWARGS = dict(
     host=os.environ.get("PGHOST",     "localhost"),
     port=int(os.environ.get("PGPORT", 5432)),
-    dbname=os.environ.get("PGDATABASE", "postgres"),
-    user=os.environ.get("PGUSER",     "postgres"),
-    password=os.environ.get("PGPASSWORD", "postgres"),
+    dbname=os.environ.get("PGDATABASE", "bench"),
+    user=os.environ.get("PGUSER",     "bench"),
+    password=os.environ.get("PGPASSWORD", "bench"),
 )
 
 FIRST_NAMES = [
@@ -328,6 +328,37 @@ QUERIES = {
         "WITH p AS (SELECT resolve_path(%(schema)s, 'Person', '%%.score') AS path) "
         "SELECT sum(get_int32_by_path(p.path, bench_proto.data)::bigint) "
         "FROM bench_proto, p",
+
+    # ---- PROTO via get_jsonb_by_scheme (текстовая схема каждый ряд -> jsonb -> поле) ----
+    "proto  / Q1 city='Moscow' count   (_jsonb_by_scheme)":
+        "SELECT count(*) FROM bench_proto "
+        "WHERE get_jsonb_by_scheme(%(schema)s, 'Person', data)->'address'->>'city' = 'Moscow'",
+    "proto  / Q2 sum(address.zip)      (_jsonb_by_scheme)":
+        "SELECT sum((get_jsonb_by_scheme(%(schema)s, 'Person', data)->'address'->>'zip')::bigint) "
+        "FROM bench_proto",
+    "proto  / Q3 sum(address.building_id) (_jsonb_by_scheme)":
+        "SELECT sum((get_jsonb_by_scheme(%(schema)s, 'Person', data)->'address'->>'building_id')::bigint) "
+        "FROM bench_proto",
+    "proto  / Q4 sum(score)             (_jsonb_by_scheme)":
+        "SELECT sum((get_jsonb_by_scheme(%(schema)s, 'Person', data)->>'score')::bigint) "
+        "FROM bench_proto",
+    # ---- PROTO via get_jsonb_by_scheme_map (resolve_scheme_map один раз в CTE -> jsonb -> поле) ----
+    "proto  / Q1 city='Moscow' count   (_jsonb_by_scheme_map)":
+        "WITH sm AS (SELECT resolve_scheme_map(%(schema)s, 'Person') AS scheme_map) "
+        "SELECT count(*) FROM bench_proto, sm "
+        "WHERE get_jsonb_by_scheme_map(sm.scheme_map, bench_proto.data)->'address'->>'city' = 'Moscow'",
+    "proto  / Q2 sum(address.zip)      (_jsonb_by_scheme_map)":
+        "WITH sm AS (SELECT resolve_scheme_map(%(schema)s, 'Person') AS scheme_map) "
+        "SELECT sum((get_jsonb_by_scheme_map(sm.scheme_map, bench_proto.data)->'address'->>'zip')::bigint) "
+        "FROM bench_proto, sm",
+    "proto  / Q3 sum(address.building_id) (_jsonb_by_scheme_map)":
+        "WITH sm AS (SELECT resolve_scheme_map(%(schema)s, 'Person') AS scheme_map) "
+        "SELECT sum((get_jsonb_by_scheme_map(sm.scheme_map, bench_proto.data)->'address'->>'building_id')::bigint) "
+        "FROM bench_proto, sm",
+    "proto  / Q4 sum(score)             (_jsonb_by_scheme_map)":
+        "WITH sm AS (SELECT resolve_scheme_map(%(schema)s, 'Person') AS scheme_map) "
+        "SELECT sum((get_jsonb_by_scheme_map(sm.scheme_map, bench_proto.data)->>'score')::bigint) "
+        "FROM bench_proto, sm",
 }
 
 def _fmt_bytes(n: int) -> str:

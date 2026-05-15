@@ -22,11 +22,16 @@ PG_FUNCTION_INFO_V1(get_int32_by_path);
 PG_FUNCTION_INFO_V1(get_int64_by_path);
 PG_FUNCTION_INFO_V1(get_double_by_path);
 PG_FUNCTION_INFO_V1(get_float_by_path);
+
+PG_FUNCTION_INFO_V1(resolve_scheme_map);
+PG_FUNCTION_INFO_V1(get_jsonb_by_scheme);
+PG_FUNCTION_INFO_V1(get_jsonb_by_scheme_map);
 }
 
 #include "pg_proto.h"
 #include "proto/Proto.h"
-#include "proto/ProtoSchemaMap.h"
+#include "proto/ProtoSchemeMap.h"
+#include "proto/ProtoToJsonConverter.h"
 
 using namespace proto;
 
@@ -59,7 +64,7 @@ Datum resolve_path(PG_FUNCTION_ARGS)
     std::string root_message     = convertStringFromDto(root_message_dto);
     std::string proto_command    = convertStringFromDto(proto_command_dto);
 
-    ProtoSchemaMap proto_schema_map(proto_schema_raw);
+    ProtoSchemeMap proto_schema_map(proto_schema_raw);
     std::vector<PathStep> path =
             proto_schema_map.resolve_path(root_message, proto_command);
 
@@ -107,7 +112,7 @@ Datum get_text_by_scheme(PG_FUNCTION_ARGS)
     std::string root_message = convertStringFromDto(root_message_dto);
 
     Proto proto_data(proto_data_raw);
-    ProtoSchemaMap proto_schema_map(proto_schema_raw);
+    ProtoSchemeMap proto_schema_map(proto_schema_raw);
 
     std::vector<PathStep> path = proto_schema_map.resolve_path(root_message, proto_command);
 
@@ -137,7 +142,7 @@ Datum get_int32_by_scheme(PG_FUNCTION_ARGS)
     std::string root_message = convertStringFromDto(root_message_dto);
 
     Proto proto_data(proto_data_raw);
-    ProtoSchemaMap proto_schema_map(proto_schema_raw);
+    ProtoSchemeMap proto_schema_map(proto_schema_raw);
 
     std::vector<PathStep> path = proto_schema_map.resolve_path(root_message, proto_command);
 
@@ -173,7 +178,7 @@ Datum get_int64_by_scheme(PG_FUNCTION_ARGS)
     std::string root_message = convertStringFromDto(root_message_dto);
 
     Proto proto_data(proto_data_raw);
-    ProtoSchemaMap proto_schema_map(proto_schema_raw);
+    ProtoSchemeMap proto_schema_map(proto_schema_raw);
 
     std::vector<PathStep> path = proto_schema_map.resolve_path(root_message, proto_command);
 
@@ -209,7 +214,7 @@ Datum get_double_by_scheme(PG_FUNCTION_ARGS)
     std::string root_message = convertStringFromDto(root_message_dto);
 
     Proto proto_data(proto_data_raw);
-    ProtoSchemaMap proto_schema_map(proto_schema_raw);
+    ProtoSchemeMap proto_schema_map(proto_schema_raw);
 
     std::vector<PathStep> path = proto_schema_map.resolve_path(root_message, proto_command);
 
@@ -239,7 +244,7 @@ Datum get_float_by_scheme(PG_FUNCTION_ARGS)
     std::string root_message = convertStringFromDto(root_message_dto);
 
     Proto proto_data(proto_data_raw);
-    ProtoSchemaMap proto_schema_map(proto_schema_raw);
+    ProtoSchemeMap proto_schema_map(proto_schema_raw);
 
     std::vector<PathStep> path = proto_schema_map.resolve_path(root_message, proto_command);
 
@@ -421,4 +426,88 @@ Datum get_double_by_path(PG_FUNCTION_ARGS)
     double result = std::get<double>(field.value);
 
     PG_RETURN_FLOAT8(result);
+}
+
+Datum resolve_scheme_map(PG_FUNCTION_ARGS)
+{
+    text* proto_schema_dto = PG_GETARG_TEXT_PP(0);
+    text* root_message_dto = PG_GETARG_TEXT_PP(1);
+
+    std::string proto_schema_raw = convertStringFromDto(proto_schema_dto);
+    std::string root_message     = convertStringFromDto(root_message_dto);
+
+    std::size_t payload_size = 0;
+    try {
+        ProtoSchemeMap proto_schema_map(proto_schema_raw);
+        payload_size = ProtoSchemeFlatMap::compute_size(proto_schema_map, root_message);
+
+        if (payload_size > static_cast<std::size_t>(MaxAllocSize) - VARHDRSZ)
+            ereport(ERROR,
+                    (errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+                            errmsg("ProtoSchemeMap payload too large")));
+
+        bytea* result = (bytea*) palloc(VARHDRSZ + payload_size);
+        SET_VARSIZE(result, VARHDRSZ + payload_size);
+
+        ProtoSchemeFlatMap::encode_into(
+                proto_schema_map,
+                root_message,
+                reinterpret_cast<std::byte*>(VARDATA(result)),
+                payload_size);
+
+        PG_RETURN_BYTEA_P(result);
+    } catch (const std::exception& e) {
+        ereport(ERROR,
+                (errcode(ERRCODE_DATA_EXCEPTION),
+                        errmsg("resolve_scheme_map failed: %s", e.what())));
+    }
+    PG_RETURN_NULL();
+}
+
+Datum get_jsonb_by_scheme(PG_FUNCTION_ARGS)
+{
+    text*  proto_schema_dto = PG_GETARG_TEXT_PP(0);
+    text*  root_message_dto = PG_GETARG_TEXT_PP(1);
+    bytea* proto_data_dto   = PG_GETARG_BYTEA_PP(2);
+
+    std::string proto_schema_raw = convertStringFromDto(proto_schema_dto);
+    std::string root_message     = convertStringFromDto(root_message_dto);
+    std::span<const std::byte> proto_data_raw = convertBytesSpanFromDto(proto_data_dto);
+
+    std::string json_str;
+    try {
+        ProtoSchemeMap schema(proto_schema_raw);
+        json_str = ProtoToJsonConverter::convert_to_json(proto_data_raw, root_message, schema);
+    } catch (const std::exception& e) {
+        ereport(ERROR,
+                (errcode(ERRCODE_DATA_EXCEPTION),
+                        errmsg("get_jsonb_by_scheme failed: %s", e.what())));
+    }
+
+    Datum jsonb_datum = DirectFunctionCall1(jsonb_in,
+                                            CStringGetDatum(json_str.c_str()));
+    PG_RETURN_DATUM(jsonb_datum);
+}
+
+Datum get_jsonb_by_scheme_map(PG_FUNCTION_ARGS)
+{
+    bytea* scheme_map_dto = PG_GETARG_BYTEA_PP(0);
+    bytea* proto_data_dto = PG_GETARG_BYTEA_PP(1);
+
+    std::span<const std::byte> scheme_map_raw = convertBytesSpanFromDto(scheme_map_dto);
+    std::span<const std::byte> proto_data_raw = convertBytesSpanFromDto(proto_data_dto);
+
+    std::string json_str;
+    try {
+        ProtoSchemeFlatMap schema(scheme_map_raw);
+        json_str = ProtoToJsonConverter::convert_to_json(proto_data_raw, schema);
+    } catch (const std::exception& e) {
+        ereport(ERROR,
+                (errcode(ERRCODE_DATA_EXCEPTION),
+                        errmsg("get_jsonb_by_scheme_map failed: %s", e.what())));
+    }
+
+    Datum jsonb_datum = DirectFunctionCall1(jsonb_in,
+                                            CStringGetDatum(json_str.c_str()));
+    PG_RETURN_DATUM(jsonb_datum);
 }

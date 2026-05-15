@@ -78,3 +78,26 @@ CREATE FUNCTION get_float_by_path(proto_path ProtoPath, proto_data bytea)
 AS 'MODULE_PATHNAME', 'get_float_by_path'
 LANGUAGE C
 STRICT;
+
+CREATE DOMAIN ProtoSchemeMap AS bytea;
+
+CREATE FUNCTION resolve_scheme_map(scheme text, root_message text)
+    RETURNS ProtoSchemeMap
+AS 'MODULE_PATHNAME', 'resolve_scheme_map'
+LANGUAGE C
+STRICT IMMUTABLE;
+
+COMMENT ON FUNCTION resolve_scheme_map(text, text) IS
+'Builds a flat binary proto schema, rooted at given message, for use with get_jsonb_by_scheme_map.';
+
+CREATE FUNCTION get_jsonb_by_scheme(scheme text, root_message text, proto_data bytea)
+    RETURNS jsonb
+AS 'MODULE_PATHNAME', 'get_jsonb_by_scheme'
+LANGUAGE C
+STRICT;
+
+CREATE FUNCTION get_jsonb_by_scheme_map(scheme_map ProtoSchemeMap, proto_data bytea)
+    RETURNS jsonb
+AS 'MODULE_PATHNAME', 'get_jsonb_by_scheme_map'
+LANGUAGE C
+STRICT;

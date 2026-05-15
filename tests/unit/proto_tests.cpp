@@ -4,7 +4,7 @@
 
 #include <span>
 
-#include "../../include/proto/ProtoSchemaMap.h"
+#include "../../include/proto/ProtoSchemeMap.h"
 #include "../../include/proto/Proto.h"
 
 #include <span>
@@ -56,7 +56,7 @@ TEST_CASE("simple smoke test", "[unit]") {
 }
 
 TEST_CASE("two-level path: phone.number", "[unit]") {
-    ProtoSchemaMap schema(SCHEMA_DEPTH_2);
+    ProtoSchemeMap schema(SCHEMA_DEPTH_2);
     auto path = schema.resolve_path("Person", "%.phone.number");
 
     REQUIRE(path.size() == 2);
@@ -73,7 +73,7 @@ TEST_CASE("two-level path: phone.number", "[unit]") {
 }
 
 TEST_CASE("scalar field first level: id", "[unit]") {
-    ProtoSchemaMap schema(SCHEMA_DEPTH_2);
+    ProtoSchemeMap schema(SCHEMA_DEPTH_2);
     auto path = schema.resolve_path("Person", "%.id");
 
     REQUIRE(path.size() == 1);
@@ -83,7 +83,7 @@ TEST_CASE("scalar field first level: id", "[unit]") {
 }
 
 TEST_CASE("path without %.-prefix", "[unit]") {
-    ProtoSchemaMap schema(SCHEMA_DEPTH_2);
+    ProtoSchemeMap schema(SCHEMA_DEPTH_2);
     auto path = schema.resolve_path("Person", "name");
 
     REQUIRE(path.size() == 1);
@@ -93,7 +93,7 @@ TEST_CASE("path without %.-prefix", "[unit]") {
 }
 
 TEST_CASE("unknown field throws", "[unit]") {
-    ProtoSchemaMap schema(SCHEMA_DEPTH_2);
+    ProtoSchemeMap schema(SCHEMA_DEPTH_2);
     REQUIRE_THROWS_AS(
             schema.resolve_path("Person", "%.unknown"),
             std::runtime_error
@@ -101,7 +101,7 @@ TEST_CASE("unknown field throws", "[unit]") {
 }
 
 TEST_CASE("unknown root message throws", "[unit]") {
-    ProtoSchemaMap schema(SCHEMA_DEPTH_2);
+    ProtoSchemeMap schema(SCHEMA_DEPTH_2);
     REQUIRE_THROWS_AS(
             schema.resolve_path("NoSuchMessage", "%.id"),
             std::runtime_error
@@ -109,7 +109,7 @@ TEST_CASE("unknown root message throws", "[unit]") {
 }
 
 TEST_CASE("e2e: resolve string field 'name'", "[e2e]") {
-    ProtoSchemaMap schema(SCHEMA_DEPTH_2);
+    ProtoSchemeMap schema(SCHEMA_DEPTH_2);
     Proto proto(std::span<const std::byte>(PERSON_PROTO, sizeof(PERSON_PROTO)));
 
     auto path   = schema.resolve_path("Person", "%.name");
@@ -121,7 +121,7 @@ TEST_CASE("e2e: resolve string field 'name'", "[e2e]") {
 }
 
 TEST_CASE("e2e: resolve int32 field 'id'", "[e2e]") {
-    ProtoSchemaMap schema(SCHEMA_DEPTH_2);
+    ProtoSchemeMap schema(SCHEMA_DEPTH_2);
     Proto proto(std::span<const std::byte>(PERSON_PROTO, sizeof(PERSON_PROTO)));
 
     auto path   = schema.resolve_path("Person", "%.id");
@@ -133,7 +133,7 @@ TEST_CASE("e2e: resolve int32 field 'id'", "[e2e]") {
 }
 
 TEST_CASE("e2e: resolve string field 'email'", "[e2e]") {
-    ProtoSchemaMap schema(SCHEMA_DEPTH_2);
+    ProtoSchemeMap schema(SCHEMA_DEPTH_2);
     Proto proto(std::span<const std::byte>(PERSON_PROTO, sizeof(PERSON_PROTO)));
 
     auto path   = schema.resolve_path("Person", "%.email");
@@ -144,7 +144,7 @@ TEST_CASE("e2e: resolve string field 'email'", "[e2e]") {
 }
 
 TEST_CASE("e2e: resolve nested field 'phone.number'", "[e2e]") {
-    ProtoSchemaMap schema(SCHEMA_DEPTH_2);
+    ProtoSchemeMap schema(SCHEMA_DEPTH_2);
     Proto proto(std::span<const std::byte>(PERSON_PROTO, sizeof(PERSON_PROTO)));
 
     auto path   = schema.resolve_path("Person", "%.phone.number");
@@ -159,7 +159,7 @@ TEST_CASE("e2e: missing field in binary throws", "[e2e]") {
     // Создаём Proto из пустого буфера
     Proto proto(std::span<const std::byte>{});
 
-    ProtoSchemaMap schema(SCHEMA_DEPTH_2);
+    ProtoSchemeMap schema(SCHEMA_DEPTH_2);
     auto path = schema.resolve_path("Person", "%.id");
 
     REQUIRE_THROWS_AS(proto.resolve_field_by_path(path), std::runtime_error);

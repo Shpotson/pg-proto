@@ -1,0 +1,55 @@
+--   name   = "alice"
+--   scores = [10, 20, 30]               (repeated int32, packed)
+--   ids    = [100, 200, 9999999999]     (repeated int64, packed)
+
+-- 1) resolve once, query once
+WITH sm AS (
+    SELECT resolve_scheme_map(
+                   $$
+package tutorial;
+
+message Stats {
+    string name = 1;
+    repeated int32 scores = 2;
+    repeated int64 ids = 3;
+}
+$$,
+        'Stats'
+    ) AS scheme_map
+)
+SELECT get_jsonb_by_scheme_map(
+               sm.scheme_map,
+               '\x0a05616c69636512030a141e1a0864c801ffc7afa025'::bytea
+       )
+FROM sm;
+                            get_jsonb_by_scheme_map                             
+--------------------------------------------------------------------------------
+ {"ids": ["100", "200", "9999999999"], "name": "alice", "scores": [10, 20, 30]}
+(1 row)
+
+
+-- 2) reuse same resolved scheme on empty proto
+WITH sm AS (
+    SELECT resolve_scheme_map(
+                   $$
+package tutorial;
+
+message Stats {
+    string name = 1;
+    repeated int32 scores = 2;
+    repeated int64 ids = 3;
+}
+$$,
+        'Stats'
+    ) AS scheme_map
+)
+SELECT get_jsonb_by_scheme_map(
+               sm.scheme_map,
+               '\x'::bytea
+       )
+FROM sm;
+ get_jsonb_by_scheme_map 
+-------------------------
+ {}
+(1 row)
+

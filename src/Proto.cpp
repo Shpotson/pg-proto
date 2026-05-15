@@ -7,25 +7,6 @@
 
 namespace proto
 {
-    static constexpr int WIRE_VARINT   = 0;
-    static constexpr int WIRE_64BIT    = 1;
-    static constexpr int WIRE_LEN      = 2;
-    static constexpr int WIRE_32BIT    = 5;
-
-    static uint64_t decode_varint(const std::byte* data, size_t size, size_t& pos)
-    {
-        uint64_t result = 0;
-        int shift = 0;
-        while (pos < size)
-        {
-            uint8_t b = static_cast<uint8_t>(data[pos++]);
-            result |= static_cast<uint64_t>(b & 0x7F) << shift;
-            if ((b & 0x80) == 0) return result;
-            shift += 7;
-            if (shift >= 64) throw std::runtime_error("Varint overflow");
-        }
-        throw std::runtime_error("Unexpected end of buffer in varint");
-    }
 
     static int32_t zagzag32(uint32_t n) { return static_cast<int32_t>((n >> 1) ^ -(n & 1)); }
     static int64_t zagzag64(uint64_t n) { return static_cast<int64_t>((n >> 1) ^ -(n & 1)); }
@@ -45,7 +26,7 @@ namespace proto
         size_t pos = 0;
         while (pos < size)
         {
-            uint64_t tag    = decode_varint(data, size, pos);
+            uint64_t tag    = Proto::decode_varint(data, size, pos);
             int field_num   = static_cast<int>(tag >> 3);
             int wire_type   = static_cast<int>(tag & 0x7);
 
@@ -55,13 +36,13 @@ namespace proto
                 rf.wire_type = wire_type;
                 rf.found = true;
 
-                if (wire_type == WIRE_VARINT)
+                if (wire_type == Proto::WIRE_VARINT)
                 {
-                    rf.varint_val = decode_varint(data, size, pos);
+                    rf.varint_val = Proto::decode_varint(data, size, pos);
                 }
-                else if (wire_type == WIRE_LEN)
+                else if (wire_type == Proto::WIRE_LEN)
                 {
-                    uint64_t len = decode_varint(data, size, pos);
+                    uint64_t len = Proto::decode_varint(data, size, pos);
                     if (pos + len > size) throw std::runtime_error("LEN field overflows buffer");
                     rf.len_val.assign(
                             data + pos,
@@ -69,13 +50,13 @@ namespace proto
                     );
                     pos += len;
                 }
-                else if (wire_type == WIRE_64BIT)
+                else if (wire_type == Proto::WIRE_64BIT)
                 {
                     if (pos + 8 > size) throw std::runtime_error("64bit field overflows buffer");
                     std::memcpy(&rf.varint_val, data + pos, 8);
                     pos += 8;
                 }
-                else if (wire_type == WIRE_32BIT)
+                else if (wire_type == Proto::WIRE_32BIT)
                 {
                     uint32_t v = 0;
                     if (pos + 4 > size) throw std::runtime_error("32bit field overflows buffer");
@@ -87,15 +68,15 @@ namespace proto
             }
             else
             {
-                if (wire_type == WIRE_VARINT)
-                    decode_varint(data, size, pos);
-                else if (wire_type == WIRE_LEN)
+                if (wire_type == Proto::WIRE_VARINT)
+                    Proto::decode_varint(data, size, pos);
+                else if (wire_type == Proto::WIRE_LEN)
                 {
-                    uint64_t len = decode_varint(data, size, pos);
+                    uint64_t len = Proto::decode_varint(data, size, pos);
                     pos += len;
                 }
-                else if (wire_type == WIRE_64BIT) pos += 8;
-                else if (wire_type == WIRE_32BIT) pos += 4;
+                else if (wire_type == Proto::WIRE_64BIT) pos += 8;
+                else if (wire_type == Proto::WIRE_32BIT) pos += 4;
                 else throw std::runtime_error("Unknown wire type: " + std::to_string(wire_type));
             }
         }
@@ -110,7 +91,6 @@ namespace proto
         const std::byte* cur_data = proto_data.data();
         size_t           cur_size = proto_data.size();
 
-        // Идём по всем шагам кроме последнего — они должны быть Message
         for (size_t i = 0; i + 1 < path.size(); ++i)
         {
             const PathStep& step = path[i];
@@ -120,17 +100,14 @@ namespace proto
             RawField rf = find_field(cur_data, cur_size, step.field_number);
             if (!rf.found)
                 throw std::runtime_error("Field '" + step.field_name + "' not found in buffer");
-            if (rf.wire_type != WIRE_LEN)
+            if (rf.wire_type != Proto::WIRE_LEN)
                 throw std::runtime_error("Expected LEN wire type for message field '" + step.field_name + "'");
 
-            // Переходим внутрь вложенного сообщения
-            // Храним промежуточные буферы чтобы не висели в стеке
             nested_buffers.push_back(std::move(rf.len_val));
             cur_data = nested_buffers.back().data();
             cur_size = nested_buffers.back().size();
         }
 
-        // Последний шаг — целевое поле
         const PathStep& last = path.back();
         RawField rf = find_field(cur_data, cur_size, last.field_number);
         if (!rf.found)
@@ -203,7 +180,7 @@ namespace proto
             if (!rf.found)
                 throw std::runtime_error(
                         "Field '" + std::string(path.name_of(i)) + "' not found in buffer");
-            if (rf.wire_type != WIRE_LEN)
+            if (rf.wire_type != Proto::WIRE_LEN)
                 throw std::runtime_error(
                         "Expected LEN wire type for message field '" +
                         std::string(path.name_of(i)) + "'");
@@ -264,4 +241,4 @@ namespace proto
         nested_buffers.clear();
         return result;
     }
-} // namespace proto
+}
