@@ -10,8 +10,6 @@ namespace proto
     using flat_proto_path_detail::MAGIC;
     using flat_proto_path_detail::VERSION;
 
-    // ---------- helpers ----------
-
     static inline void write_bytes(std::byte* dst, const void* src, std::size_t n)
     {
         std::memcpy(dst, src, n);
@@ -44,7 +42,6 @@ namespace proto
         h.reserved     = 0;
         write_bytes(dst, &h, sizeof(h));
 
-        // Сначала разложим имена и одновременно соберём StepRecord.
         uint32_t cur_name_off = names_offset;
         for (uint32_t i = 0; i < step_count; ++i)
         {
@@ -147,4 +144,4 @@ namespace proto
             throw std::runtime_error("FlatProtoPath: names region overflows buffer");
     }
 
-} // namespace proto
+}

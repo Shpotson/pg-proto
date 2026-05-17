@@ -24,7 +24,8 @@ REGRESS = basic \
           get_float_by_path_positive \
           get_double_by_path_positive \
           get_jsonb_by_scheme_positive \
-          get_jsonb_by_scheme_map_positive
+          get_jsonb_by_scheme_map_positive \
+          schema_registry_positive
 
 REGRESS_OPTS = --inputdir=.
 

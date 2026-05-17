@@ -101,3 +101,66 @@ CREATE FUNCTION get_jsonb_by_scheme_map(scheme_map ProtoSchemeMap, proto_data by
 AS 'MODULE_PATHNAME', 'get_jsonb_by_scheme_map'
 LANGUAGE C
 STRICT;
+
+CREATE TABLE proto_schemas (
+                               name          text   NOT NULL,
+                               version       int    NOT NULL,
+                               scheme        text   NOT NULL,
+                               root_message  text   NOT NULL,
+                               created_at    timestamptz NOT NULL DEFAULT now(),
+                               PRIMARY KEY (name, version)
+);
+
+CREATE FUNCTION create_new_proto_scheme(p_name text, p_scheme text, p_root_message text)
+    RETURNS void
+AS $$
+BEGIN
+INSERT INTO proto_schemas (name, version, scheme, root_message)
+VALUES (p_name, 1, p_scheme, p_root_message)
+    ON CONFLICT (name, version) DO NOTHING;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE FUNCTION commit_new_version(p_name text, p_scheme text)
+    RETURNS int
+AS $$
+DECLARE
+last_version int;
+    last_root    text;
+BEGIN
+SELECT ps.version, ps.root_message
+INTO last_version, last_root
+FROM proto_schemas ps
+WHERE ps.name = p_name
+ORDER BY ps.version DESC
+    LIMIT 1;
+IF last_version IS NULL THEN
+        RAISE EXCEPTION 'proto scheme % does not exist', p_name;
+END IF;
+INSERT INTO proto_schemas (name, version, scheme, root_message)
+VALUES (p_name, last_version + 1, p_scheme, last_root);
+RETURN last_version + 1;
+END;
+$$ LANGUAGE plpgsql;
+
+
+CREATE FUNCTION resolve_current_scheme(p_name text)
+    RETURNS text
+AS $$
+SELECT ps.scheme
+FROM proto_schemas ps
+WHERE ps.name = p_name
+ORDER BY ps.version DESC
+    LIMIT 1;
+$$ LANGUAGE sql STABLE;
+
+
+CREATE FUNCTION resolve_scheme_root_message(p_name text)
+    RETURNS text
+AS $$
+SELECT ps.root_message
+FROM proto_schemas ps
+WHERE ps.name = p_name
+ORDER BY ps.version DESC
+    LIMIT 1;
+$$ LANGUAGE sql STABLE;
