@@ -1,10 +1,13 @@
 
 
+import argparse
 import os
 import random
 import string
 import statistics
 import struct
+import sys
+import tempfile
 import time
 from io import StringIO
 
@@ -16,12 +19,16 @@ WARMUP_ROUNDS = 2
 MEASURE_ROUNDS = 5
 REPORT_PATH = "bench_results.txt"
 
+RIVAL_EXTENSION       = "postgres_protobuf"
+RIVAL_DESCRIPTOR_NAME = "default"
+RIVAL_PROTO_FQN       = "tutorial.Person"
+
 CONN_KWARGS = dict(
     host=os.environ.get("PGHOST",     "localhost"),
     port=int(os.environ.get("PGPORT", 5432)),
-    dbname=os.environ.get("PGDATABASE", "bench"),
-    user=os.environ.get("PGUSER",     "bench"),
-    password=os.environ.get("PGPASSWORD", "bench"),
+    dbname=os.environ.get("PGDATABASE", "postgres"),
+    user=os.environ.get("PGUSER",     "postgres"),
+    password=os.environ.get("PGPASSWORD", "postgres"),
 )
 
 FIRST_NAMES = [
@@ -214,27 +221,109 @@ CREATE TABLE bench_jsonb (id bigint PRIMARY KEY, data jsonb);
 CREATE TABLE bench_proto (id bigint PRIMARY KEY, data bytea);
 """
 
+RIVAL_PROTO_SCHEMA = """
+syntax = "proto2";
+package tutorial;
 
-def setup(conn):
+message Person {
+    optional string name = 1;
+    optional int32 id = 2;
+    optional string email = 3;
+    optional PhoneNumber phone = 4;
+    optional sint64 balance = 5;
+    optional double height_m = 6;
+    optional float weight_kg = 7;
+    optional bool is_active = 8;
+    optional Address address = 9;
+    optional sint32 score = 10;
+}
+
+message PhoneNumber {
+    optional string number = 1;
+}
+
+message Address {
+    optional string street = 1;
+    optional string city = 2;
+    optional uint32 zip = 3;
+    optional int64 building_id = 4;
+    optional double latitude = 5;
+    optional float longitude = 6;
+    optional bool is_primary = 7;
+}
+"""
+
+
+def build_rival_descriptor_set() -> bytes:
+    try:
+        from grpc_tools import protoc as _protoc
+    except ImportError as e:
+        raise RuntimeError(
+            "--compare-rival requires grpcio-tools (pip install grpcio-tools)"
+        ) from e
+    import grpc_tools
+    proto_include = os.path.join(os.path.dirname(grpc_tools.__file__), "_proto")
+
+    with tempfile.TemporaryDirectory() as td:
+        proto_path = os.path.join(td, "bench.proto")
+        with open(proto_path, "w", encoding="utf-8") as f:
+            f.write(RIVAL_PROTO_SCHEMA)
+        out_path = os.path.join(td, "bench.pb")
+        rc = _protoc.main([
+            "protoc",
+            f"-I{td}",
+            f"-I{proto_include}",
+            f"--descriptor_set_out={out_path}",
+            "--include_imports",
+            proto_path,
+        ])
+        if rc != 0:
+            raise RuntimeError(f"protoc failed with rc={rc}")
+        with open(out_path, "rb") as f:
+            return f.read()
+
+
+def setup(conn, with_rival: bool):
     with conn.cursor() as cur:
         for stmt in [s for s in DDL.split(";") if s.strip()]:
             cur.execute(stmt)
+        if with_rival:
+            cur.execute(f"DROP EXTENSION IF EXISTS {RIVAL_EXTENSION} CASCADE")
+            cur.execute(f"CREATE EXTENSION {RIVAL_EXTENSION}")
+            cur.execute("DROP TABLE IF EXISTS bench_proto_rival")
+            cur.execute("CREATE TABLE bench_proto_rival (id bigint PRIMARY KEY, data bytea)")
+            desc = build_rival_descriptor_set()
+            cur.execute(
+                "DELETE FROM protobuf_file_descriptor_sets WHERE name = %s",
+                (RIVAL_DESCRIPTOR_NAME,),
+            )
+            cur.execute(
+                "INSERT INTO protobuf_file_descriptor_sets (name, file_descriptor_set) VALUES (%s, %s)",
+                (RIVAL_DESCRIPTOR_NAME, desc),
+            )
     conn.commit()
 
 
-def teardown(conn):
+def teardown(conn, with_rival: bool):
     with conn.cursor() as cur:
         cur.execute("DROP TABLE IF EXISTS bench_json;")
         cur.execute("DROP TABLE IF EXISTS bench_jsonb;")
         cur.execute("DROP TABLE IF EXISTS bench_proto;")
         cur.execute("DROP EXTENSION IF EXISTS pg_proto;")
+        if with_rival:
+            cur.execute("DROP TABLE IF EXISTS bench_proto_rival;")
+            cur.execute(
+                "DELETE FROM protobuf_file_descriptor_sets WHERE name = %s",
+                (RIVAL_DESCRIPTOR_NAME,),
+            )
+            cur.execute(f"DROP EXTENSION IF EXISTS {RIVAL_EXTENSION} CASCADE")
     conn.commit()
 
 def _pg_bytea_literal_for_copy(b: bytes) -> str:
     return "\\\\x" + b.hex()
 
 
-def insert_all(conn, persons_with_proto):
+def insert_all(conn, persons_with_proto, with_rival: bool):
     import json as _json
 
     # JSON
@@ -270,6 +359,16 @@ def insert_all(conn, persons_with_proto):
     buf.seek(0)
     with conn.cursor() as cur, cur.copy("COPY bench_proto (id, data) FROM STDIN") as cp:
         cp.write(buf.getvalue())
+
+    if with_rival:
+        buf = StringIO()
+        for pid, _, b in persons_with_proto:
+            buf.write(f"{pid}\t{_pg_bytea_literal_for_copy(b)}\n")
+        buf.seek(0)
+        with conn.cursor() as cur, cur.copy(
+            "COPY bench_proto_rival (id, data) FROM STDIN"
+        ) as cp:
+            cp.write(buf.getvalue())
 
     conn.commit()
 
@@ -342,6 +441,7 @@ QUERIES = {
     "proto  / Q4 sum(score)             (_jsonb_by_scheme)":
         "SELECT sum((get_jsonb_by_scheme(%(schema)s, 'Person', data)->>'score')::bigint) "
         "FROM bench_proto",
+
     # ---- PROTO via get_jsonb_by_scheme_map (resolve_scheme_map один раз в CTE -> jsonb -> поле) ----
     "proto  / Q1 city='Moscow' count   (_jsonb_by_scheme_map)":
         "WITH sm AS (SELECT resolve_scheme_map(%(schema)s, 'Person') AS scheme_map) "
@@ -359,6 +459,24 @@ QUERIES = {
         "WITH sm AS (SELECT resolve_scheme_map(%(schema)s, 'Person') AS scheme_map) "
         "SELECT sum((get_jsonb_by_scheme_map(sm.scheme_map, bench_proto.data)->>'score')::bigint) "
         "FROM bench_proto, sm",
+}
+
+# postgres-protobuf (mpartel) — конвертим бинарь -> JSON text -> jsonb -> поле.
+# Честный аналог нашему get_jsonb_by_scheme_map.
+RIVAL_QUERIES = {
+    "rival  / Q1 city='Moscow' count   (protobuf_to_json_text)":
+        "SELECT count(*) FROM bench_proto_rival "
+        "WHERE (protobuf_to_json_text('" + RIVAL_PROTO_FQN + "', data)::jsonb)"
+        "->'address'->>'city' = 'Moscow'",
+    "rival  / Q2 sum(address.zip)      (protobuf_to_json_text)":
+        "SELECT sum(((protobuf_to_json_text('" + RIVAL_PROTO_FQN + "', data)::jsonb)"
+        "->'address'->>'zip')::bigint) FROM bench_proto_rival",
+    "rival  / Q3 sum(address.building_id) (protobuf_to_json_text)":
+        "SELECT sum(((protobuf_to_json_text('" + RIVAL_PROTO_FQN + "', data)::jsonb)"
+        "->'address'->>'building_id')::bigint) FROM bench_proto_rival",
+    "rival  / Q4 sum(score)             (protobuf_to_json_text)":
+        "SELECT sum(((protobuf_to_json_text('" + RIVAL_PROTO_FQN + "', data)::jsonb)"
+        "->>'score')::bigint) FROM bench_proto_rival",
 }
 
 def _fmt_bytes(n: int) -> str:
@@ -381,11 +499,11 @@ SIZE_SQL = """
 AVG_COLUMN_SQL = "SELECT avg(pg_column_size(data))::bigint FROM {table}"
 
 
-def collect_sizes(conn) -> dict:
-    """Считаем реальные размеры всех трёх табличек после ANALYZE."""
+def collect_sizes(conn, tables) -> dict:
+    """Считаем реальные размеры табличек после ANALYZE."""
     out = {}
     with conn.cursor() as cur:
-        for table in ("bench_json", "bench_jsonb", "bench_proto"):
+        for table in tables:
             cur.execute(SIZE_SQL, (table,))
             total, heap, toast, idx = cur.fetchone()
             cur.execute(AVG_COLUMN_SQL.format(table=table))
@@ -402,15 +520,14 @@ def collect_sizes(conn) -> dict:
 def print_sizes(sizes: dict) -> str:
     """Формирует текстовый блок для отчёта."""
     lines = []
-    lines.append(f"{'table':12s}  {'total':>11s}  {'heap':>11s}  "
+    lines.append(f"{'table':18s}  {'total':>11s}  {'heap':>11s}  "
                  f"{'toast':>11s}  {'indexes':>11s}  {'avg col':>10s}")
-    lines.append("-" * 78)
+    lines.append("-" * 84)
     base_total = sizes["bench_proto"]["total"]
     base_col   = sizes["bench_proto"]["avg_col"]
-    for table in ("bench_json", "bench_jsonb", "bench_proto"):
-        s = sizes[table]
+    for table, s in sizes.items():
         lines.append(
-            f"{table:12s}  "
+            f"{table:18s}  "
             f"{_fmt_bytes(s['total']):>11s}  "
             f"{_fmt_bytes(s['heap']):>11s}  "
             f"{_fmt_bytes(s['toast']):>11s}  "
@@ -419,11 +536,10 @@ def print_sizes(sizes: dict) -> str:
         )
     lines.append("")
     lines.append("Ratios (vs bench_proto):")
-    for table in ("bench_json", "bench_jsonb", "bench_proto"):
-        s = sizes[table]
+    for table, s in sizes.items():
         r_total = s["total"]   / base_total if base_total else 0
         r_col   = s["avg_col"] / base_col   if base_col   else 0
-        lines.append(f"  {table:12s}  total ×{r_total:5.2f}   avg col ×{r_col:5.2f}")
+        lines.append(f"  {table:18s}  total ×{r_total:5.2f}   avg col ×{r_col:5.2f}")
     return "\n".join(lines)
 
 def time_query(conn, sql_text: str, params: dict, rounds: int) -> list:
@@ -437,19 +553,28 @@ def time_query(conn, sql_text: str, params: dict, rounds: int) -> list:
     return timings
 
 
-def warmup_all(conn, params):
+def warmup_all(conn, params, queries, tables):
     with conn.cursor() as cur:
-        cur.execute("SELECT count(*) FROM bench_json")
-        cur.fetchone()
-        cur.execute("SELECT count(*) FROM bench_jsonb")
-        cur.fetchone()
-        cur.execute("SELECT count(*) FROM bench_proto")
-        cur.fetchone()
-    # дополнительно один проход каждого запроса
-    for label, q in QUERIES.items():
+        for t in tables:
+            cur.execute(f"SELECT count(*) FROM {t}")
+            cur.fetchone()
+    for label, q in queries.items():
         time_query(conn, q, params, WARMUP_ROUNDS)
 
+def parse_args():
+    ap = argparse.ArgumentParser()
+    ap.add_argument(
+        "--compare-rival",
+        action="store_true",
+        help="Also run postgres-protobuf (mpartel) extension for comparison. "
+             "Requires the extension installed and grpcio-tools in Python.",
+    )
+    return ap.parse_args()
+
 def main():
+    args = parse_args()
+    with_rival = args.compare_rival
+
     print(f"Generating {N} rows ...")
     data = []
     for i in range(1, N + 1):
@@ -463,45 +588,54 @@ def main():
     )
     print(f"  avg proto bytes:  {avg_proto_size:.1f}")
     print(f"  avg json  chars:  {avg_json_size:.1f}")
+    if with_rival:
+        print("  rival comparison: ENABLED (postgres-protobuf)")
+
+    queries = dict(QUERIES)
+    if with_rival:
+        queries.update(RIVAL_QUERIES)
+
+    tables = ["bench_json", "bench_jsonb", "bench_proto"]
+    if with_rival:
+        tables.append("bench_proto_rival")
 
     print("Connecting:", {k: v for k, v in CONN_KWARGS.items() if k != "password"})
     with psycopg.connect(**CONN_KWARGS) as conn:
         conn.autocommit = False
 
         print("Setup (extension + tables) ...")
-        setup(conn)
+        setup(conn, with_rival)
 
         print("Inserting via COPY ...")
         t0 = time.perf_counter()
-        insert_all(conn, data)
+        insert_all(conn, data, with_rival)
         print(f"  inserted in {time.perf_counter() - t0:.2f}s")
 
         with conn.cursor() as cur:
-            cur.execute("ANALYZE bench_json;")
-            cur.execute("ANALYZE bench_jsonb;")
-            cur.execute("ANALYZE bench_proto;")
+            for t in tables:
+                cur.execute(f"ANALYZE {t};")
         conn.commit()
 
         print("Table sizes:")
-        sizes = collect_sizes(conn)
+        sizes = collect_sizes(conn, tables)
         sizes_block = print_sizes(sizes)
         print(sizes_block)
 
         params = {"schema": PROTO_SCHEMA}
 
         print(f"Warm-up ({WARMUP_ROUNDS} rounds per query) ...")
-        warmup_all(conn, params)
+        warmup_all(conn, params, queries, tables)
 
         print(f"Measuring ({MEASURE_ROUNDS} rounds per query) ...")
         results = {}
-        for label, q in QUERIES.items():
+        for label, q in queries.items():
             ts = time_query(conn, q, params, MEASURE_ROUNDS)
             results[label] = ts
             print(f"  {label:55s}  min={min(ts)*1000:8.2f} ms  "
                   f"med={statistics.median(ts)*1000:8.2f} ms")
 
         print("Teardown ...")
-        teardown(conn)
+        teardown(conn, with_rival)
 
     with open(REPORT_PATH, "w", encoding="utf-8") as f:
         f.write(f"pg_proto stress benchmark\n")
@@ -509,7 +643,9 @@ def main():
         f.write(f"warmup_rounds = {WARMUP_ROUNDS}, measure_rounds = {MEASURE_ROUNDS}\n")
         f.write(f"avg proto bytes: {avg_proto_size:.1f}\n")
         f.write(f"avg json  chars: {avg_json_size:.1f}\n")
+        f.write(f"compare_rival:   {with_rival}\n")
         f.write("\n")
+        f.write(sizes_block + "\n\n")
         f.write(f"{'query':60s}  {'min ms':>10s}  {'med ms':>10s}  "
                 f"{'mean ms':>10s}  {'max ms':>10s}\n")
         f.write("-" * 110 + "\n")
