@@ -32,7 +32,7 @@ REGRESS_OPTS = --inputdir=.
 PG_CONFIG ?= pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)
 
-PGFILEDESC = "pg_proto - PostgreSQL extension skeleton for proto/proto schema types"
+PGFILEDESC = "pg_proto - PostgreSQL extension for working with Protobuf: proto data type, on-the-fly deserialization of bytea payloads, and a schema registry for message schemas"
 
 override PG_CPPFLAGS += -I$(CURDIR)/include
 override PG_CXXFLAGS += -std=c++20 -Wall -Wextra -Wpedantic

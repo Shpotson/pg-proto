@@ -11,27 +11,6 @@
 
 namespace proto
 {
-    // ---------------------------------------------------------------------
-    // Бинарный формат.
-    // Всё little-endian, упаковано без выравнивания > 4.
-    //
-    // Header (24 байта):
-    //   uint32 magic        = 0x50504154 ('PPAT' little-endian)
-    //   uint32 version      = 1
-    //   uint32 step_count
-    //   uint32 names_offset // смещение от начала payload до блока имён
-    //   uint32 names_size
-    //   uint32 reserved     // 0, выравнивание/расширение
-    //
-    // Steps[step_count] (по 12 байт):
-    //   int32  field_number
-    //   uint8  kind        // FieldKind, см. ProtoUtils.h
-    //   uint8  reserved
-    //   uint16 name_len
-    //   uint32 name_offset // смещение от начала payload до имени
-    //
-    // NamesBlock: плотно упакованные байты имён, без NUL-терминаторов.
-    // ---------------------------------------------------------------------
 
     namespace flat_proto_path_detail
     {

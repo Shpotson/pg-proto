@@ -23,6 +23,7 @@ namespace proto
         std::string out;
         out.reserve(s.size() + 2);
         out.push_back('"');
+
         for (unsigned char c : s)
         {
             switch (c) {
@@ -43,6 +44,7 @@ namespace proto
                     }
             }
         }
+
         out.push_back('"');
         return out;
     }
@@ -54,11 +56,13 @@ namespace proto
         out.reserve(size * 2 + 6);
         out.push_back('"');
         out += "\\\\x";
+
         for (std::size_t i = 0; i < size; ++i) {
             uint8_t b = static_cast<uint8_t>(data[i]);
             out.push_back(hex[b >> 4]);
             out.push_back(hex[b & 0x0F]);
         }
+
         out.push_back('"');
         return out;
     }
@@ -66,33 +70,42 @@ namespace proto
     template <typename T>
     static std::string emit_float(T v)
     {
-        if (std::isnan(v))  return "\"NaN\"";
-        if (std::isinf(v))  return v < 0 ? "\"-Infinity\"" : "\"Infinity\"";
+        if (std::isnan(v)){
+            return "\"NaN\"";
+        }
+        if (std::isinf(v)){
+            return v < 0 ? "\"-Infinity\"" : "\"Infinity\"";
+        }
+
         std::ostringstream os;
+
         os << std::setprecision(std::is_same_v<T,double> ? 17 : 9) << v;
+
         return os.str();
     }
 
     static std::string quoted_number(const std::string& num)
     {
         std::string out;
+
         out.reserve(num.size() + 2);
         out.push_back('"');
         out += num;
         out.push_back('"');
+
         return out;
     }
 
     static std::string emit_scalar_varint(FieldKind kind, uint64_t v)
     {
         switch (kind) {
-            case FieldKind::Int32:  return std::to_string(static_cast<int32_t>(v));
+            case FieldKind::Int32: return std::to_string(static_cast<int32_t>(v));
             case FieldKind::UInt32: return std::to_string(static_cast<uint32_t>(v));
             case FieldKind::SInt32: return std::to_string(zagzag32(static_cast<uint32_t>(v)));
-            case FieldKind::Int64:  return quoted_number(std::to_string(static_cast<int64_t>(v)));
+            case FieldKind::Int64: return quoted_number(std::to_string(static_cast<int64_t>(v)));
             case FieldKind::UInt64: return quoted_number(std::to_string(v));
             case FieldKind::SInt64: return quoted_number(std::to_string(zagzag64(v)));
-            case FieldKind::Bool:   return v ? "true" : "false";
+            case FieldKind::Bool: return v ? "true" : "false";
             default:
                 throw std::runtime_error("emit_scalar_varint: kind mismatch (" + to_string(kind) + ")");
         }
@@ -101,26 +114,33 @@ namespace proto
     static std::string emit_scalar_32bit(FieldKind kind, uint32_t bits)
     {
         switch (kind) {
-            case FieldKind::Fixed32: return std::to_string(bits);
+            case FieldKind::Fixed32:{
+                return std::to_string(bits);
+            }
             case FieldKind::Float: {
                 float f; std::memcpy(&f, &bits, 4);
                 return emit_float(f);
             }
-            default:
+            default:{
                 throw std::runtime_error("emit_scalar_32bit: kind mismatch (" + to_string(kind) + ")");
+            }
         }
     }
 
     static std::string emit_scalar_64bit(FieldKind kind, uint64_t bits)
     {
         switch (kind) {
-            case FieldKind::Fixed64: return quoted_number(std::to_string(bits));
+            case FieldKind::Fixed64: {
+                return quoted_number(std::to_string(bits));
+            }
             case FieldKind::Double: {
                 double d; std::memcpy(&d, &bits, 8);
                 return emit_float(d);
             }
-            default:
+            default:{
                 throw std::runtime_error("emit_scalar_64bit: kind mismatch (" + to_string(kind) + ")");
+            }
+
         }
     }
 
@@ -128,13 +148,15 @@ namespace proto
                                        const std::byte* data, std::size_t size)
     {
         switch (kind) {
-            case FieldKind::String:
-                return json_escape_string(
-                        std::string_view(reinterpret_cast<const char*>(data), size));
-            case FieldKind::Bytes:
+            case FieldKind::String:{
+                return json_escape_string(std::string_view(reinterpret_cast<const char*>(data), size));
+            }
+            case FieldKind::Bytes:{
                 return bytes_to_hex_literal(data, size);
-            default:
+            }
+            default:{
                 throw std::runtime_error("emit_scalar_len: kind mismatch (" + to_string(kind) + ")");
+            }
         }
     }
 
@@ -159,8 +181,10 @@ namespace proto
                 }
                 case FieldKind::Fixed32:
                 case FieldKind::Float: {
-                    if (pos + 4 > size)
+                    if (pos + 4 > size){
                         throw std::runtime_error("Packed 32-bit overflows buffer");
+                    }
+
                     uint32_t bits;
                     std::memcpy(&bits, data + pos, 4);
                     pos += 4;
@@ -169,21 +193,26 @@ namespace proto
                 }
                 case FieldKind::Fixed64:
                 case FieldKind::Double: {
-                    if (pos + 8 > size)
+                    if (pos + 8 > size){
                         throw std::runtime_error("Packed 64-bit overflows buffer");
+                    }
+
                     uint64_t bits;
                     std::memcpy(&bits, data + pos, 8);
                     pos += 8;
                     out.push_back(emit_scalar_64bit(kind, bits));
                     break;
                 }
-                default:
+                default:{
                     throw std::runtime_error("Packed encoding not valid for kind " + to_string(kind));
+                }
+
             }
         }
         return out;
     }
 
+    //TODO это бы куда-то перенести.
     struct FieldSlot {
         std::vector<std::string> pieces;
         bool                     seen = false;
@@ -192,6 +221,7 @@ namespace proto
         FieldKind                kind = FieldKind::Int32;
     };
 
+    //TODO это бы куда-то перенести.
     struct SchemaMapAdapter {
         const ProtoSchemeMap& schema;
         const ProtoSchemeMap::MessageDef& msg;
@@ -220,6 +250,7 @@ namespace proto
         }
     };
 
+    //TODO это бы куда-то перенести.
     struct SchemeFlatAdapter {
         const ProtoSchemeFlatMap& schema;
         const ProtoSchemeFlatMap::MessageRecord& msg;
@@ -340,8 +371,11 @@ namespace proto
             const ProtoSchemeMap& schema)
     {
         const auto* root = schema.get_message_def(root_message_name);
-        if (!root)
+
+        if (!root){
             throw std::runtime_error("Unknown root message: " + root_message_name);
+        }
+
         return emit_message(proto_data, SchemaMapAdapter{schema, *root});
     }
 
