@@ -31,12 +31,6 @@ const std::string SCHEMA_DEPTH_2 = R"(
 // id    = 42                 (field 2, int32)
 // email = "alice@example.com"(field 3, string)
 // phone.number = "+71234567890" (field 4 → field 1, string)
-//
-// Разбор wire-формата:
-//   0a 05 "Alice"              → tag=(1<<3|2)=0x0a, len=5
-//   10 2a                      → tag=(2<<3|0)=0x10, varint=42
-//   1a 11 "alice@example.com"  → tag=(3<<3|2)=0x1a, len=17
-//   22 0e [0a 0c "+71234567890"]→ tag=(4<<3|2)=0x22, len=14, nested PhoneNumber
 constexpr std::byte PERSON_PROTO[] = {
         std::byte{0x0a}, std::byte{0x05}, std::byte{0x41}, std::byte{0x6c},
         std::byte{0x69}, std::byte{0x63}, std::byte{0x65}, std::byte{0x10},
